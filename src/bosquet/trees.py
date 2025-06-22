@@ -2,23 +2,25 @@ from collections import Counter
 from functools import total_ordering
 from itertools import product
 from math import ceil, factorial
-from typing import Callable, ClassVar
+from typing import Callable, ClassVar, TypeVar, cast
 
 TreeIndex = tuple[int, int]
 """Type for tree index represented as a tuple of two integers: (uncolored tree index, color index)."""
 
+R = TypeVar("R")
 
-def cache(key_part: str) -> Callable:
-    def decorator(func):
+
+def cache(key_part: str) -> Callable[[Callable[["Tree"], R]], Callable[["Tree"], R]]:
+    def decorator(func: Callable[["Tree"], R]) -> Callable[["Tree"], R]:
         cache_attr = f"_{func.__name__}_cache"
 
-        def wrapper(self):
-            # Get or initialize cache on the class
+        def wrapper(self: "Tree") -> R:
             cache = getattr(self.__class__, cache_attr, None)
             if cache is None:
                 cache = {}
                 setattr(self.__class__, cache_attr, cache)
 
+            key: int | tuple[int, int]
             if key_part == "index":
                 key = self.index[0]
             elif key_part == "color":
@@ -29,7 +31,7 @@ def cache(key_part: str) -> Callable:
                 raise ValueError(f"Invalid key part: {key_part}, must be 'index', 'color' or 'both'")
 
             if key in cache:
-                return cache[key]
+                return cast(R, cache[key])
 
             result = func(self)
             cache[key] = result
@@ -110,7 +112,7 @@ class Tree:
             index int: The index of the uncolored tree.
             coloring (int, optional): The index of the coloring of the tree. Defaults to 0.
 
-        Example:
+        Examples:
             >>> t = Tree(4)
             >>> t2 = Tree(10, 4)
         """
@@ -152,8 +154,8 @@ class Tree:
         Args:
             order: The maximum order of trees to generate
 
-        Example:
-        >>> Tree.generate_trees(5)
+        Examples:
+            >>> Tree.generate_trees(5)
         """
         if order > cls._order_max + 1:
             cls.generate_trees(order - 1)
@@ -178,7 +180,7 @@ class Tree:
             cls._order_max = order
 
     @classmethod
-    def generate_index(cls, index: int):
+    def generate_index(cls, index: int) -> None:
         order = cls._order_max + 1
         while index >= len(cls._comp):
             cls.generate_trees(order)
@@ -194,7 +196,7 @@ class Tree:
         Returns:
             A range of indices for trees of the specified order
 
-        Example:
+        Examples:
             >>> [Tree(i) for i in Tree.indices(4)]
             [Tree(5), Tree(6), Tree(7), Tree(8)]
         """
@@ -213,7 +215,7 @@ class Tree:
         Returns:
             A Tree instance representing the left tree
 
-        Example:
+        Examples:
             >>> t = Tree(4)
             >>> t.left.index
             1
@@ -228,7 +230,7 @@ class Tree:
         Returns:
             A Tree instance representing the right tree
 
-        Example:
+        Examples:
             >>> t = Tree(4)
             >>> t.right.index
             2
@@ -243,7 +245,7 @@ class Tree:
         Returns:
             A tuple (left_tree, right_tree)
 
-        Example:
+        Examples:
             >>> t = Tree(4)
             >>> left, right = t.decompose()
             >>> l.index, r.index
@@ -282,14 +284,15 @@ class Tree:
         Returns:
             The density of the tree
 
-        Example:
+        Examples:
             >>> t = Tree(5)
             >>> t.gamma
             4
         """
         g = self.order
-        for c in self.children.items():
-            g *= c[0].gamma ** c[1]
+        for tree, count in self.children.items():
+            g *= tree.gamma**count
+
         return g
 
     @property
@@ -300,7 +303,7 @@ class Tree:
         Returns:
             The symmetry of the tree
 
-        Example:
+        Examples:
             >>> t = Tree(5)
             >>> t.sigma
             6
@@ -321,7 +324,7 @@ class Tree:
         Returns:
             The height of the tree
 
-        Example:
+        Examples:
             >>> t = Tree(4)
             >>> t.height
             2
@@ -342,7 +345,7 @@ class Tree:
         Returns:
             The width of the tree
 
-        Example:
+        Examples:
             >>> t = Tree(4)
             >>> t.width
             1
@@ -362,7 +365,7 @@ class Tree:
         Returns:
             A Counter mapping Tree instances to their multiplicities
 
-        Example:
+        Examples:
             >>> t = Tree(4)
             >>> t.children  # Tree 4 has two copies of Tree 1 and one of Tree 2
             Counter({Tree(2): 1})

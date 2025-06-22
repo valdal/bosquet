@@ -1,1 +1,1 @@
-::: bosquet.foo
+::: bosquet.trees
