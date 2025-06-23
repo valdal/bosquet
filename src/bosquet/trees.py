@@ -152,7 +152,7 @@ class Tree:
         """Generate all trees up to the specified order.
 
         Args:
-            order: The maximum order of trees to generate
+            new_order (int): The maximum order of trees to generate
 
         Examples:
             >>> Tree.generate_trees(5)
