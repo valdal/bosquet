@@ -1,5 +1,6 @@
 from collections import Counter
-from functools import total_ordering
+from functools import cache as fun_cache
+from functools import reduce, total_ordering
 from itertools import product
 from math import ceil, factorial
 from typing import Callable, ClassVar, TypeVar, cast
@@ -7,6 +8,7 @@ from typing import Callable, ClassVar, TypeVar, cast
 TreeIndex = tuple[int, int]
 """Type for tree index represented as a tuple of two integers: (uncolored tree index, color index)."""
 
+# Caching decorator for tree methods
 R = TypeVar("R")
 
 
@@ -15,11 +17,6 @@ def cache(key_part: str) -> Callable[[Callable[["Tree"], R]], Callable[["Tree"],
         cache_attr = f"_{func.__name__}_cache"
 
         def wrapper(self: "Tree") -> R:
-            cache = getattr(self.__class__, cache_attr, None)
-            if cache is None:
-                cache = {}
-                setattr(self.__class__, cache_attr, cache)
-
             key: int | tuple[int, int]
             if key_part == "index":
                 key = self.index[0]
@@ -29,6 +26,11 @@ def cache(key_part: str) -> Callable[[Callable[["Tree"], R]], Callable[["Tree"],
                 key = self.index
             else:
                 raise ValueError(f"Invalid key part: {key_part}, must be 'index', 'color' or 'both'")
+
+            cache = getattr(self.__class__, cache_attr, None)
+            if cache is None:
+                cache = {}
+                setattr(self.__class__, cache_attr, cache)
 
             if key in cache:
                 return cast(R, cache[key])
@@ -53,7 +55,8 @@ class Tree:
     _is_linear: ClassVar[list[bool]] = [False]
 
     _order_max: ClassVar[int] = 0
-    _comp: ClassVar[list[list[tuple[TreeIndex, TreeIndex]]]] = [[((0, 0), (0, 0))]]
+    _comp: ClassVar[list[tuple[int, int]]] = [(0, 0)]
+    _comp_colors: ClassVar[list[list[tuple[int, int]]]] = [[(0, 0)]]
     _index_first: ClassVar[list] = [0, 1]
 
     @classmethod
@@ -61,49 +64,43 @@ class Tree:
         """Clears all generated trees and caches values for this class."""
 
         cls._order_max = 0
-        cls._comp = [[((0, 0), (0, 0))]]
+        cls._comp = [(0, 0)]
+        cls._comp_colors = [[(0, 0)]]
         cls._index_first = [0, 1]
 
         # Clear all cached values
         for attr_name in dir(cls):
             if attr_name.endswith("_cache") and attr_name.startswith("_"):
-                cache = getattr(cls, attr_name)
-                if isinstance(cache, dict):
-                    cache.clear()
+                delattr(cls, attr_name)
+
+    @classmethod
+    def set_num_colors(cls, n: int, is_linear: list[bool] | None = None) -> None:
+        """Set the number of color for the trees
+
+        Args:
+            n (int): Number of colors
+        """
+        if n < 1:
+            raise ValueError("Number of colors must be at least 1")
+        if is_linear is None:
+            is_linear = [False] * n
+        if len(is_linear) != n:
+            raise ValueError(f"len(is_linear) must be {n}, got {len(is_linear)}")
+
+        cls._num_colors = n
+        cls._is_linear = is_linear
+
+        cls.clear()
 
     @classmethod
     def num_colors(cls) -> int:
         return cls._num_colors
 
     @classmethod
-    def set_num_colors(cls, n: int) -> None:
-        """Set the number of color for the trees
-
-        Args:
-            n (int): Number of colors
-        """
-        cls._num_colors = n
-        cls.clear()
-
-    @classmethod
     def is_linear(cls, root: int) -> bool:
+        if root < 0 or root >= cls._num_colors:
+            raise ValueError(f"Root must be in range [0, {cls._num_colors - 1}], got {root}")
         return cls._is_linear[root]
-
-    @classmethod
-    def set_is_linear(cls, is_linear: list[bool]) -> None:
-        """Set which operators are linear
-
-        Args:
-            is_linear (list[bool]): List of bool.
-                If is_linear[i] is true, the i^th operator is linear
-
-        Raises:
-            ValueError: If len(is_linear) != cls._num_colors
-        """
-        if len(is_linear) != cls._num_colors:
-            raise ValueError(f"len(is_linear) must be {cls._num_colors}, got {len(is_linear)}")
-        cls._is_linear = is_linear
-        cls.clear()
 
     def __init__(self, index: int, coloring: int = 0) -> None:
         """Initialize a Tree with the given index
@@ -111,10 +108,6 @@ class Tree:
         Args:
             index int: The index of the uncolored tree.
             coloring (int, optional): The index of the coloring of the tree. Defaults to 0.
-
-        Examples:
-            >>> t = Tree(4)
-            >>> t2 = Tree(10, 4)
         """
         if index < 0:
             raise ValueError("Tree index must be non-negative")
@@ -124,8 +117,8 @@ class Tree:
         # Generate trees until we have the index
         self.generate_index(index)
 
-        if coloring >= len(self._comp[index]):
-            raise ValueError(f"Color index must be less than {len(self._comp[index])}, got {coloring}")
+        if coloring >= len(self._comp_colors[index]):
+            raise ValueError(f"Color index must be less than {len(self._comp_colors[index])}, got {coloring}")
 
         self.index = (index, coloring)
 
@@ -147,8 +140,15 @@ class Tree:
             return NotImplemented
         return self.index < other.index
 
+    def __repr__(self) -> str:
+        """Return a string representation of the tree."""
+        if self.num_colors() == 1:
+            return f"Tree({self.index[0]})"
+        else:
+            return f"Tree({self.index[0]}, {self.index[1]})"
+
     @classmethod
-    def generate_trees(cls, order: int) -> None:
+    def generate_trees(cls, new_order: int) -> None:
         """Generate all trees up to the specified order.
 
         Args:
@@ -157,30 +157,35 @@ class Tree:
         Examples:
             >>> Tree.generate_trees(5)
         """
-        if order > cls._order_max + 1:
-            cls.generate_trees(order - 1)
+        if new_order < 0:
+            raise ValueError("Order must be non-negative")
 
-        if order > cls._order_max:
+        for order in range(cls._order_max + 1, new_order + 1):
             for j in range(1, ceil(order / 2)):
                 idxLeft = cls.indices(order - j)
                 idxRight = cls.indices(j)
                 for left, right in product(idxLeft, idxRight):
                     if not cls.is_linear(Tree(left).root) and Tree(left).right >= Tree(right):
-                        cls._comp.append([])
+                        cls._comp.append((left, right))
+                        cls._comp_colors.append([])
                         for lc, rc in product(cls.colorings(left), cls.colorings(right)):
-                            cls._comp[-1].append(((left, lc), (right, rc)))
+                            cls._comp_colors[-1].append((lc, rc))
 
             for r in cls.indices(order - 1):
-                cls._comp.append([])
+                cls._comp.append((1, r))
+                cls._comp_colors.append([])
                 for rc in cls.colorings(r):
                     for root in range(cls._num_colors):
-                        cls._comp[-1].append(((1, root), (r, rc)))
+                        cls._comp_colors[-1].append((root, rc))
 
             cls._index_first.append(len(cls._comp))
             cls._order_max = order
 
     @classmethod
     def generate_index(cls, index: int) -> None:
+        if index < 0:
+            raise ValueError("Index must be non-negative")
+
         order = cls._order_max + 1
         while index >= len(cls._comp):
             cls.generate_trees(order)
@@ -206,7 +211,7 @@ class Tree:
     @classmethod
     def colorings(cls, index: int) -> range:
         cls.generate_index(index)
-        return range(len(cls._comp[index]))
+        return range(len(cls._comp_colors[index]))
 
     @property
     def left(self) -> "Tree":
@@ -220,8 +225,9 @@ class Tree:
             >>> t.left.index
             1
         """
-        index, color = self.index
-        return Tree(*self._comp[index][color][0])
+        idx = self._comp[self.index[0]][0]
+        col = self._comp_colors[self.index[0]][self.index[1]][0]
+        return Tree(idx, col)
 
     @property
     def right(self) -> "Tree":
@@ -235,8 +241,9 @@ class Tree:
             >>> t.right.index
             2
         """
-        index, color = self.index
-        return Tree(*self._comp[index][color][1])
+        idx = self._comp[self.index[0]][1]
+        col = self._comp_colors[self.index[0]][self.index[1]][1]
+        return Tree(idx, col)
 
     @property
     def decompose(self) -> tuple["Tree", "Tree"]:
@@ -251,14 +258,46 @@ class Tree:
             >>> l.index, r.index
             (1, 2)
         """
-        index, color = self.index
-        left, right = self._comp[index][color]
-        return Tree(*left), Tree(*right)
+        idx = self._comp[self.index[0]]
+        col = self._comp_colors[self.index[0]][self.index[1]]
+        return Tree(idx[0], col[0]), Tree(idx[1], col[1])
+
+    @classmethod
+    @fun_cache
+    def circ(cls, left: "Tree", right: "Tree") -> "Tree":
+        sum_order = left.order + right.order
+        cls.generate_trees(sum_order)
+        try:
+            # Get the index (without coloring)
+            idx = cls._comp.index(
+                (left.index[0], right.index[0]), cls._index_first[sum_order], cls._index_first[sum_order + 1]
+            )
+            # Find the color index
+            col = cls._comp_colors[idx].index((left.index[1], right.index[1]))
+            return Tree(idx, col)
+        except ValueError:
+            return cls.from_children(left.children + Counter([right]), left.root, check_order=False)
+
+    @classmethod
+    def from_children(cls, children: Counter["Tree"] | list["Tree"], root: int = 0, check_order: bool = True) -> "Tree":
+        if not isinstance(children, Counter):
+            children = Counter(children)
+
+        sorted_children = sorted(children.elements(), reverse=True)
+
+        if check_order:
+            order = sum(t.order * k for t, k in children.items())
+            cls.generate_trees(order)
+        return reduce(cls.circ, sorted_children, Tree(1, root))
+
+    @classmethod
+    def merge_root(cls, left: "Tree", right: "Tree", root: int = 0) -> "Tree":
+        return cls.from_children(left.children + right.children, root)
 
     @property
     @cache(key_part="both")
     def root(self) -> int:
-        """Return the root of the tree t_i"""
+        """Return the root of the tree"""
         if self.index[0] == 0:
             return -1
         if self.index[0] == 1:
@@ -289,6 +328,8 @@ class Tree:
             >>> t.gamma
             4
         """
+        if self.index[0] <= 1:
+            return 1
         g = self.order
         for tree, count in self.children.items():
             g *= tree.gamma**count
